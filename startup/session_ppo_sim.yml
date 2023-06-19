@@ -1,0 +1,55 @@
+name: path_planning_optimization
+root: ./
+startup_window: roscore
+pre_window: source <%= @settings["setup_name"] %>
+windows:
+  - roscore:
+      layout: tiled
+      panes:
+        - roscore
+        - export SITL_RITW_TERMINAL="tmux new-window -d -n:ardupilot1"; waitForRos; 
+          roslaunch ardupilot_gazebo sim_vehicle.launch
+          id:=1
+          enable_console:=false
+          parm_file:=$(rospack find ardupilot_gazebo)/config/kopterworx_red.parm
+        - waitForRos; rosparam set use_sim_time true; waitForSimulation; roslaunch ardupilot_gazebo mavros.launch
+  - gazebo:
+      layout: tiled
+      panes:
+        - waitForRos; roslaunch ardupilot_gazebo kopterworx.launch use_sim_time:=true
+  - arm&takeof:
+      layout: tiled
+      panes:
+        - waitForRos; waitForOdometry; roslaunch uav_ros_control pid_carrot.launch manual_takeoff:=false
+        - rosrun ardupilot_gazebo automatic_takeoff.sh
+  - trajectory:
+      layout: tiled
+      panes:
+        - waitForRos; roslaunch uav_ros_tracker mpc_tracker.launch tracker_config:=custom_config/mpc_tracker_config.yaml
+        - waitForRos; waitForOdometry; roslaunch path_planning_optimization path_to_tracker.launch
+        - |
+          history -s "rostopic pub -1 /red/flight_path geometry_msgs/PoseArray '{header: {frame_id: ''}, poses: [{position: {x: 5.0, y: 3.0, z: 3.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}, {position: {x: 10.0, y: -2.0, z: 5.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}]}'"
+  # - potential_fields:
+  #     layout: tiled
+  #     panes: 
+  #       - waitForRos; roslaunch potential_fields trajectory_go_to.launch
+  #       - waitForRos; roslaunch potential_fields potential_fields.launch 
+  #         odometry:=odometry
+  #         lim_x:=3.0
+  #         lim_y:=3.0
+  #         accumulated_pc_flag:="false"
+  #       - |
+  #         history -s "rosservice call /$UAV_NAMESPACE/potential_fields/toggle \"data: true\""
+  #       - |
+  #         history -s "rostopic pub /$UAV_NAMESPACE/go_to/reference geometry_msgs/Pose '{position: {x: 2.5, y: 1.0, z: 2.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}'"
+  # - rviz:
+  #     layout: tiled
+  #     panes:
+  #       - waitForRos; waitForSysStatus; rosrun rviz rviz -d $(rospack find potential_fields)/rviz/potential_fields_sim.rviz
+  #       - waitForRos; roslaunch potential_fields world_to_base_link.launch 
+  #         odometry:=odometry
+  #       - waitForRos; waitForSysStatus; roscd potential_fields/config; rqt --perspective-file $(rospack find potential_fields)/perspective/reconfigure.perspective
+  # - rosbag:
+  #     layout: tiled
+  #     panes: 
+  #       - history -s "rosbag record -a -x \"(.*)/camera(.*)|(.*)velodyne(.*)|(.*)scan(.*)\" -o $HOME/Potential_fields/ros_bags/sim/journal_simulations/pot_field_sim_2-walls_"
