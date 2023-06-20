@@ -29,6 +29,11 @@ windows:
         - waitForRos; waitForOdometry; roslaunch path_planning_optimization path_to_tracker.launch
         - |
           history -s "rostopic pub -1 /red/flight_path geometry_msgs/PoseArray '{header: {frame_id: ''}, poses: [{position: {x: 5.0, y: 3.0, z: 3.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}, {position: {x: 10.0, y: -2.0, z: 5.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}]}'"
+  - optimization:
+      layout: tiled
+      panes:
+        - waitForRos; waitForOdometry; roslaunch path_planning_optimization path_optimization.launch
+
   # - potential_fields:
   #     layout: tiled
   #     panes: 
