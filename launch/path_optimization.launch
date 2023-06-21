@@ -2,11 +2,13 @@
   <arg name="rate" default="10" />
   <arg name="namespace" default="$(env UAV_NAMESPACE)" />
   <arg name="num_of_batt" default="1" />
+  <arg name="batt_time" default="[0.2]" />
 
   <group ns="$(arg namespace)">
     <node name="path_optimization" pkg="path_planning_optimization" type="path_optimization.py" output="screen">
       <param name="rate" value="20" />
       <param name="num_of_batt" value="2" />
+      <param name="batt_time" value="[0.1, 0.2]" />
     </node>
   </group>
 </launch>

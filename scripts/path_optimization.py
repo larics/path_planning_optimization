@@ -1,11 +1,15 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import rospy, math
 import copy
+import time
 from geometry_msgs.msg import Pose, PoseStamped, PoseArray, Transform, Twist
 from nav_msgs.msg import Odometry
 from trajectory_msgs.msg import MultiDOFJointTrajectory, MultiDOFJointTrajectoryPoint
 from std_msgs.msg import Bool
+from mip import Model, BINARY, minimize, xsum
+from math import sqrt
+import numpy as np
 
 class PathOptimization:
 
@@ -13,6 +17,7 @@ class PathOptimization:
         self.rate = rospy.get_param('~rate', 100)
         self.ros_rate = rospy.Rate(self.rate)
         self.num_of_batt = rospy.get_param('~num_of_batt')
+        self.batt_time = rospy.get_param('~batt_time')
         self.vel_xy = 1.0
         self.vel_z = 1.0
         self.vel_yaw = 1.0
@@ -26,13 +31,32 @@ class PathOptimization:
         self.first_batt_flag = False
 
         self.active_batt = 0
-        self.wp_list = [[[1,1,5,0,0,0,1],[1,2,5,0,0,0,1],[1,3,5,0,0,0,1],[1,4,5,0,0,0,1]],[[2,1,5,0,0,0,1],[2,1,5,0,0,0,1]]]
-    
+        self.b1 = [[1,1,5,0,0,0,1],[1,2,5,0,0,0,1],[1,3,5,0,0,0,1],[1,4,5,0,0,0,1]]
+        self.b2 = [[2,1,5,0,0,0,1],[2,1,5,0,0,0,1]]
+        self.b = []
+        self.b.append(self.b1)
+        self.b.append(self.b2)
+        print(self.b)
+        # self.wp_list = [[[1,1,5,0,0,0,1],[1,2,5,0,0,0,1],[1,3,5,0,0,0,1],[1,4,5,0,0,0,1]],[[2,1,5,0,0,0,1],[2,2,5,0,0,0,1]]]
+        self.wp_list = []
+        self.base = [0,0,1,0,0,0,1]
+        self.wp1 = [1,1,5,0,0,0,1]
+        self.wp2 = [1,2,5,0,0,0,1]
+        self.wp3 = [1,3,5,0,0,0,1]
+
+        self.wp5 = [2,2,5,0,0,0,1]
+        self.wp6 = [3,2,5,0,0,0,1]
+        self.wp7 = [4,2,5,0,0,0,1]
+        self.wp8 = [5,2,5,0,0,0,1]
+        self.wp9 = [6,2,5,0,0,0,1]
+
+        self.wp = [self.wp1,self.wp2,self.wp3,self.wp5,self.wp6,self.wp7,self.wp8,self.wp9]
 
         # rospy.Subscriber('mavros/global_position/local', Odometry, self.odometryCallback, queue_size=1)
         rospy.Subscriber('base_flag', Bool, self.baseFlagCallback, queue_size=1)
 
-        # self.flight_path_pub = rospy.Publisher('flight_path', PoseStamped, queue_size=1)
+        self.flight_path_pub = rospy.Publisher('flight_path', PoseArray, queue_size=1)
+        # self.mpc_tracker_pose_pub = rospy.Publisher('tracker/input_pose', PoseStamped, queue_size=1)
 
         self.current_uav_pose = Pose()
         self.path_recieved_flag = False
@@ -50,6 +74,8 @@ class PathOptimization:
         print("PathOptimization initialized")
         print("Num of batteries: %d" % self.num_of_batt)
 
+        time.sleep(0.5)
+
     def odometryCallback(self, msg):
         self.current_uav_pose.position = msg.pose.pose.position
         self.current_uav_pose.orientation = msg.pose.pose.orientation
@@ -60,12 +86,77 @@ class PathOptimization:
 
     def pathOptimization(self):
         print("Optimization function")
+        dist_wp = []
+
+
+        def distance(x,y):
+            return sqrt((x[0]-y[0]) ** 2 + (x[1]-y[1]) ** 2 + (x[2]-y[2]) ** 2)
+
+        for n in range(len(self.wp)-1):
+            dist_wp.append(distance(self.wp[n],self.wp[n+1]))
+
+
+        N = len(self.wp)                  # number of POIs  
+        B = self.num_of_batt                    # no. of batteries
+        K = set(range(N-1))           # number of segments = N-1
+        J = set(range(B))            # no. of batteries
+
+        s_k = dist_wp*len(J)
+        s_k_tmp = np.array(s_k)
+        s_k_tmp = np.reshape(s_k_tmp,(len(J),len(K)))
+        s_k = s_k_tmp.tolist()
+
+        v_c = 5        # constant velocity [m/s]
+
+        m = Model()
+
+        x = [[m.add_var(var_type=BINARY) for k in K] for j in J]
+
+        t_fjk = []
+        t_fj = []
+        t_j = self.batt_time
+
+        for j in J:
+            for k in K:
+                t_fjk.append(s_k[j][k]/v_c * x[j][k])    
+
+        tmp = np.array(t_fjk)    
+        tmp_m = np.reshape(tmp,(len(J),len(K)))
+        t_fjk = tmp_m.tolist()
+        t_j = [0.1, 0.2]
+
+        for j in J:
+            t_fj.append(xsum(t_fjk[j][k] for k in K) - t_j[j])
+            
+
+
+        m.objective = minimize(xsum(x[j][k] for k in K for j in J))  
+
+        for j in J:
+            m += xsum(t_fjk[j][k] for k in K) <= t_j[j] * v_c
+
+        for j in J:
+            for k in K:
+                m += xsum(x[j][k] for j in J) == 1
+
+        m.optimize()
+
+        b_list = []
+        b_list = [[] for _ in J]
+
+        for j in J:
+            for k in K:
+                if x[j][k].x == 1:
+                    b_list[j].append(self.wp[k])
+            b_list[j].append(self.base)       
+
+        self.wp_list = b_list
         self.optimize_path_flag = False
 
-    def distanceToWaypoint(self):
-        self.distance_to_waypoint = math.sqrt((self.current_uav_pose.position.x - self.next_waypoint.pose.position.x)**2
-        + (self.current_uav_pose.position.y - self.next_waypoint.pose.position.y)**2
-        + (self.current_uav_pose.position.z - self.next_waypoint.pose.position.z)**2)
+    # def distanceToWaypoint(self):
+    #     self.distance_to_waypoint = math.sqrt((self.current_uav_pose.position.x - self.next_waypoint.pose.position.x)**2
+    #     + (self.current_uav_pose.position.y - self.next_waypoint.pose.position.y)**2
+    #     + (self.current_uav_pose.position.z - self.next_waypoint.pose.position.z)**2)
         
     def run(self):
         rate = rospy.Rate(self.rate)
@@ -77,19 +168,19 @@ class PathOptimization:
 
             if ((self.first_batt_flag == True) or (self.base_flag == True)) and (self.active_batt < self.num_of_batt):
                 self.flight_path = PoseArray()
+                print("Active battery: %d " % self.active_batt)
                 for i in range(len(self.wp_list[self.active_batt])):
-                    self.flight_path_wp = PoseStamped()
-                    self.flight_path_wp.pose.position.x = self.wp_list[self.active_batt][i][0]
-                    # print(self.wp_list[self.active_batt][i][1])
-                    self.flight_path_wp.pose.position.y = self.wp_list[self.active_batt][i][1]
-                    self.flight_path_wp.pose.position.z = self.wp_list[self.active_batt][i][2]
-                    self.flight_path_wp.pose.orientation.x = self.wp_list[self.active_batt][i][3]
-                    self.flight_path_wp.pose.orientation.y = self.wp_list[self.active_batt][i][4]
-                    self.flight_path_wp.pose.orientation.z = self.wp_list[self.active_batt][i][5]
-                    self.flight_path_wp.pose.orientation.w = self.wp_list[self.active_batt][i][6]
+                    self.flight_path_wp = Pose()
+                    self.flight_path_wp.position.x = self.wp_list[self.active_batt][i][0]
+                    self.flight_path_wp.position.y = self.wp_list[self.active_batt][i][1]
+                    self.flight_path_wp.position.z = self.wp_list[self.active_batt][i][2]
+                    self.flight_path_wp.orientation.x = self.wp_list[self.active_batt][i][3]
+                    self.flight_path_wp.orientation.y = self.wp_list[self.active_batt][i][4]
+                    self.flight_path_wp.orientation.z = self.wp_list[self.active_batt][i][5]
+                    self.flight_path_wp.orientation.w = self.wp_list[self.active_batt][i][6]
                     self.flight_path.poses.append(self.flight_path_wp)
-                self.flight_path_pub(self.flight_path)
-                print(self.flight_path)
+                self.flight_path_pub.publish(self.flight_path)
+                # print(self.flight_path)
                 self.first_batt_flag = False
                 self.base_flag = False
 
