@@ -18,6 +18,13 @@ class PathOptimization:
         self.ros_rate = rospy.Rate(self.rate)
         self.num_of_batt = rospy.get_param('~num_of_batt')
         self.batt_time = rospy.get_param('~batt_time')
+        self.l_x = rospy.get_param('~length_x')
+        self.l_y = rospy.get_param('~length_y')
+        self.r = rospy.get_param('~spacing')
+        self.base_x = rospy.get_param('~base_x')
+        self.base_y = rospy.get_param('~base_y')
+        self.base_z = rospy.get_param('~base_z')
+        self.altitude = rospy.get_param('~altitude')
         self.vel_xy = 1.0
         self.vel_z = 1.0
         self.vel_yaw = 1.0
@@ -39,18 +46,7 @@ class PathOptimization:
         print(self.b)
         # self.wp_list = [[[1,1,5,0,0,0,1],[1,2,5,0,0,0,1],[1,3,5,0,0,0,1],[1,4,5,0,0,0,1]],[[2,1,5,0,0,0,1],[2,2,5,0,0,0,1]]]
         self.wp_list = []
-        self.base = [0,0,1,0,0,0,1]
-        self.wp1 = [1,1,5,0,0,0,1]
-        self.wp2 = [1,2,5,0,0,0,1]
-        self.wp3 = [1,3,5,0,0,0,1]
-
-        self.wp5 = [2,2,5,0,0,0,1]
-        self.wp6 = [3,2,5,0,0,0,1]
-        self.wp7 = [4,2,5,0,0,0,1]
-        self.wp8 = [5,2,5,0,0,0,1]
-        self.wp9 = [6,2,5,0,0,0,1]
-
-        self.wp = [self.wp1,self.wp2,self.wp3,self.wp5,self.wp6,self.wp7,self.wp8,self.wp9]
+        self.base = [self.base_x,self.base_y,self.base_z,0,0,0,1]
 
         # rospy.Subscriber('mavros/global_position/local', Odometry, self.odometryCallback, queue_size=1)
         rospy.Subscriber('base_flag', Bool, self.baseFlagCallback, queue_size=1)
@@ -86,23 +82,50 @@ class PathOptimization:
 
     def pathOptimization(self):
         print("Optimization function")
-        dist_wp = []
 
+        # rectangular shape of the field with the equal spacing r
+
+        n_x = int(self.l_x/self.r +1)
+        n_y = int(self.l_y/self.r +1)
+
+        n_wp = n_x * n_y
+
+        z = self.altitude       # constant height [m]
+        wp = [[0,0,z,0,0,0,1] for _ in range(n_wp)]
+
+        for x in range(self.l_x+1):
+            for y in range(self.l_y+1):
+                wp[x*(n_y)+y][1] = y+1
+
+        for x in range(self.l_x+1):
+            for y in range(self.l_y+1):
+                wp[y*(n_x)+x][0] = y+1   
+
+
+        for n in range(self.l_y+1):
+            if n %2:
+                wp_tmp = wp[n*self.l_x+n:n*self.l_x+n+self.l_x+1]   
+                wp_tmp.reverse()
+                wp[n*self.l_x+n:n*self.l_x+n+self.l_x+1]=wp_tmp 
+
+        dist_wp = []
 
         def distance(x,y):
             return sqrt((x[0]-y[0]) ** 2 + (x[1]-y[1]) ** 2 + (x[2]-y[2]) ** 2)
 
-        for n in range(len(self.wp)-1):
-            dist_wp.append(distance(self.wp[n],self.wp[n+1]))
+        for n in range(len(wp)-1):
+            dist_wp.append(distance(wp[n],wp[n+1]))
 
 
-        N = len(self.wp)                  # number of POIs  
+        N = len(wp)                  # number of POIs  
         B = self.num_of_batt                    # no. of batteries
         K = set(range(N-1))           # number of segments = N-1
         J = set(range(B))            # no. of batteries
+        # print(N, B, K, J)
 
         s_k = dist_wp*len(J)
         s_k_tmp = np.array(s_k)
+        # print(s_k_tmp)
         s_k_tmp = np.reshape(s_k_tmp,(len(J),len(K)))
         s_k = s_k_tmp.tolist()
 
@@ -115,6 +138,7 @@ class PathOptimization:
         t_fjk = []
         t_fj = []
         t_j = self.batt_time
+        # print(t_j)
 
         for j in J:
             for k in K:
@@ -123,7 +147,7 @@ class PathOptimization:
         tmp = np.array(t_fjk)    
         tmp_m = np.reshape(tmp,(len(J),len(K)))
         t_fjk = tmp_m.tolist()
-        t_j = [0.1, 0.2]
+        # t_j = [0.1, 0.2]
 
         for j in J:
             t_fj.append(xsum(t_fjk[j][k] for k in K) - t_j[j])
@@ -147,10 +171,13 @@ class PathOptimization:
         for j in J:
             for k in K:
                 if x[j][k].x == 1:
-                    b_list[j].append(self.wp[k])
+                    b_list[j].append(wp[k])
             b_list[j].append(self.base)       
 
         self.wp_list = b_list
+        print(self.wp_list[0])
+        print("next battery")
+        print(self.wp_list[1])
         self.optimize_path_flag = False
 
     # def distanceToWaypoint(self):

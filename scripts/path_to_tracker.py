@@ -54,7 +54,7 @@ class PathToTracker:
             print("Flight path received")
 
         self.multi_dof_trajectory = MultiDOFJointTrajectory()
-        for i in (0, self.number_of_waypoints-1):
+        for i in range(0, self.number_of_waypoints):
             temp_point = MultiDOFJointTrajectoryPoint()
             temp_transform = Transform()
             temp_vel = Twist()
